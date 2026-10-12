@@ -366,11 +366,16 @@ String? normalizeWebViewAddress(String? input) {
 bool _looksLikeHost(String host) =>
     RegExp(r'^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$').hasMatch(host);
 
-/// 错误卡片上给用户看的一句「将打开哪个站」。
+/// 错误卡片上给用户看的一句「点【网页视图】会打开哪个站」。
 ///
 /// 加这一行是用户口径：报错信息里要能看出**源站地址确实拿到了**——三轮「点了
 /// 没反应」之后，用户需要一个当场能核对的证据。解析不出时返回 null（不给
 /// 空话，点击时的输入框会兜住）。
+///
+/// 文案口径（真机反馈修正）：**不写「将打开」**。自动通道已经在加载链路里一律
+/// 不许可（见 CHANGELOG ⑫①），应用不会自己弹出验证窗；写成「将打开」会让用户
+/// 干等一个永远不出现的窗口（真机三次实测都这样）。现在这句只说两件事：
+/// 地址是哪个 + 出口在哪。
 String? webViewTargetHint({
   String? failureMessage,
   String? sourceId,
@@ -382,5 +387,5 @@ String? webViewTargetHint({
     originUrl: originUrl,
     quiet: true,
   );
-  return url == null ? null : '网页视图将打开：$url';
+  return url == null ? null : '可点【网页视图】过校验（目标站：$url）';
 }

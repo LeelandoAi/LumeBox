@@ -41,6 +41,13 @@ class PlaybackSpeedMeter {
   /// 正在测。
   final ValueNotifier<bool> busy = ValueNotifier<bool>(false);
 
+  /// 最近一次探测**没测出读数**（失败 / 被站点拒绝 / 数据太小）。
+  ///
+  /// 界面据此把占位文案从「测速」换成「测速失败」：真机反馈的「点测速没反应」
+  /// 就是这个——失败后既不显示数字、也不显示结论，按钮文案和占位文案一模一样，
+  /// 用户只能理解为「点了没用」。如实报失败比沉默好。
+  final ValueNotifier<bool> failed = ValueNotifier<bool>(false);
+
   /// 是否已经对某个地址测过（同一地址不重复自动测）。
   Uri? _measured;
   bool _disposed = false;
@@ -60,10 +67,15 @@ class PlaybackSpeedMeter {
       final value = await _measure(uri, headers);
       if (_disposed) return;
       kbps.value = value;
+      // 没读到有效数据也算失败（站点拒绝 Range / 回了个错误页 / 数据太小）。
+      failed.value = value == null;
     } catch (error) {
-      // 测速失败不影响播放：清掉读数并记一条日志。
+      // 测速失败不影响播放：清掉读数、如实标记失败并记一条日志。
       LumeLog.info('[player] 测速失败（$uri）：$error');
-      if (!_disposed) kbps.value = null;
+      if (!_disposed) {
+        kbps.value = null;
+        failed.value = true;
+      }
     } finally {
       if (!_disposed) busy.value = false;
     }
@@ -107,5 +119,6 @@ class PlaybackSpeedMeter {
     _disposed = true;
     kbps.dispose();
     busy.dispose();
+    failed.dispose();
   }
 }

@@ -69,6 +69,12 @@ class _ComicPageState extends State<ComicPage> {
     // 自己开的阅读库自己关（注入进来的库不代管）：释放 sqlite 句柄与内存，
     // 下次进板块会重新打开同一个库文件，书架与进度照旧。
     if (widget.library == null) ReadingLibrary.close(Section.comic);
+    // 自己开的图源板块也自己关（与阅读库同一条纪律，注入进来的不代管）。
+    // **收在板块页而不是探索页**：探索页在图源导入后会原地刷新、在同一次会话里
+    // 被重挂，它退出时关掉的是整个板块共享的注册表——板块还活着，别的页面
+    //（书架 / 详情）随后取图源就会报「This database has already been closed」。
+    // 注册表在下次 [SourceRegistry.open] 时会按需重建，因此这里关得干净。
+    if (widget.manager == null) LumeSources.close(Section.comic);
     super.dispose();
   }
 
@@ -163,16 +169,22 @@ class _ComicPageState extends State<ComicPage> {
         pipeline: pipeline,
         manager: sourceManager,
       ),
+      // 探索页走**原地刷新**（revision 传进去，不换 Key）：换 Key 会让新旧实例
+      // 在同一帧里交接，而旧实例退出时会关掉板块共享的图源注册表——新实例随后
+      // 的首次解析就撞上「数据库已关闭」（真机在导入订阅后复现）。
       explore: ComicExplorePage(
-        key: ValueKey<int>(_revision),
         library: library,
         pipeline: pipeline,
         manager: widget.manager,
+        revision: _revision,
       ),
     );
   }
 
   /// 图源导入后重挂书架与探索：两块内容各自重新解析本板块的图源与列表。
+  ///
+  /// 书架用 Key 重挂（它的数据来自阅读库，与图源注册表无关）；探索页原地刷新
+  /// （见上面的说明）。
   void _onSourcesChanged() => setState(() => _revision++);
 
   /// 阅读历史抽屉：底部 Sheet 里浏览最近的阅读记录与收藏（不新开全屏页面）。

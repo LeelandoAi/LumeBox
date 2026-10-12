@@ -603,15 +603,16 @@ void main() {
       expect(normalizeWebViewAddress('随便写点什么'), isNull);
     });
 
-    test('webViewTargetHint：卡片上要看得出来源站地址拿到了', () {
+    test('webViewTargetHint：卡片上要看得出来源站地址拿到了，且不写「将打开」', () {
       SourceRequestLog.record('s', 'https://www.92mh.com/');
-      expect(
-        webViewTargetHint(
-          failureMessage: 'NEED_WEBVIEW_VERIFY（HTTP 403）',
-          sourceId: 's',
-        ),
-        '网页视图将打开：https://www.92mh.com/',
+      final hint = webViewTargetHint(
+        failureMessage: 'NEED_WEBVIEW_VERIFY（HTTP 403）',
+        sourceId: 's',
       );
+      expect(hint, contains('https://www.92mh.com/'), reason: '地址要能当场核对');
+      expect(hint, contains('网页视图'), reason: '要指明出口在哪');
+      // 真机反馈：应用不会自动弹验证窗，写成「将打开」会让用户干等一个不出现的窗。
+      expect(hint, isNot(contains('将打开')));
       expect(webViewTargetHint(sourceId: 'mystery'), isNull);
     });
   });

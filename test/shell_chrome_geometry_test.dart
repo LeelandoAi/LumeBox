@@ -186,7 +186,7 @@ void main() {
     }
   });
 
-  testWidgets('底部 Dock 悬浮在屏幕底边之上 + 左右大幅收窄（用户口径第十一次）',
+  testWidgets('底部 Dock 悬浮在屏幕底边之上 + 左右宽度（用户口径第十二次）',
       (tester) async {
     await pumpShell(tester);
 
@@ -199,14 +199,18 @@ void main() {
       inInclusiveRange(10.0, 16.0),
       reason: '胶囊要悬浮在屏幕底边之上（约 12pt），实测 $gap',
     );
-    // 用户口径第十一次：左右两侧**大幅收窄**，缩短悬浮背景的总宽度——胶囊按
-    // 「最大宽度 320、居中」摆放，440pt 的屏幕上两侧各留 (440-320)/2 = 60。
-    expect(capsule.width, closeTo(320, 0.01), reason: '胶囊总宽度要收到 320');
+    // 用户口径第十二次：五个页签左右两侧**稍微加宽**——胶囊按「最大宽度 360、
+    // 居中」摆放，440pt 的屏幕上两侧各留 (440-360)/2 = 40（第十一次收窄到 320
+    // 时是 60，这一轮往回收一点，但仍不铺满屏宽）。
+    expect(capsule.width, closeTo(360, 0.01), reason: '胶囊总宽度按 360 摆放');
     expect(
       capsule.left,
-      closeTo((width - 320) / 2, 0.01),
+      closeTo((width - 360) / 2, 0.01),
       reason: '胶囊居中：左侧留白 =（屏宽 − 最大宽度）÷ 2',
     );
+    // 加宽是**稍微**：两侧仍要留白（不铺满屏宽）。
+    expect(capsule.left, greaterThan(0));
+    expect(width - capsule.right, closeTo(capsule.left, 0.01));
 
     // 收窄容器**不许收窄点击区域**：五项平分之后每项仍要够手指点（≥44）。
     final items = find

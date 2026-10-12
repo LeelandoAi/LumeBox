@@ -50,6 +50,7 @@ void main() {
           introEnabled: true,
           outroEnabled: true,
           introHandled: false,
+          outroHandled: false,
           hasNext: true,
         ),
         const SkipOutcome.seekTo(Duration(seconds: 90)),
@@ -64,6 +65,7 @@ void main() {
           introEnabled: true,
           outroEnabled: true,
           introHandled: true,
+          outroHandled: false,
           hasNext: true,
         ).action,
         SkipAction.none,
@@ -79,6 +81,7 @@ void main() {
           introEnabled: false,
           outroEnabled: true,
           introHandled: false,
+          outroHandled: false,
           hasNext: true,
         ).action,
         SkipAction.none,
@@ -94,6 +97,7 @@ void main() {
           introEnabled: true,
           outroEnabled: true,
           introHandled: true,
+          outroHandled: false,
           hasNext: true,
         ),
         const SkipOutcome.advance(),
@@ -109,9 +113,42 @@ void main() {
           introEnabled: true,
           outroEnabled: true,
           introHandled: true,
+          outroHandled: false,
           hasNext: false,
         ),
         const SkipOutcome.seekTo(Duration(minutes: 45)),
+      );
+    });
+
+    test('片尾只处理一次：跳过之后位置仍在片尾之后，也不再重复跳', () {
+      // 死循环的守门人（真机挂死用例的根因）：「跳到结尾」之后位置就停在片尾
+      // 标记之后，若这里再返回一次 seekTo/advance，就会每个快照跳一次、永不退出。
+      expect(
+        SkipDecision.resolve(
+          marks: marks,
+          position: const Duration(minutes: 44, seconds: 59),
+          duration: const Duration(minutes: 45),
+          introEnabled: true,
+          outroEnabled: true,
+          introHandled: true,
+          outroHandled: true,
+          hasNext: false,
+        ).action,
+        SkipAction.none,
+      );
+      // 同一集里若还有下一集（连播路径）同样不再重复换集。
+      expect(
+        SkipDecision.resolve(
+          marks: marks,
+          position: const Duration(minutes: 44, seconds: 59),
+          duration: const Duration(minutes: 45),
+          introEnabled: true,
+          outroEnabled: true,
+          introHandled: true,
+          outroHandled: true,
+          hasNext: true,
+        ).action,
+        SkipAction.none,
       );
     });
 
@@ -125,6 +162,7 @@ void main() {
           introEnabled: true,
           outroEnabled: true,
           introHandled: false,
+          outroHandled: false,
           hasNext: true,
         ).action,
         SkipAction.none,
@@ -140,6 +178,7 @@ void main() {
           introEnabled: true,
           outroEnabled: true,
           introHandled: false,
+          outroHandled: false,
           hasNext: true,
         ).action,
         SkipAction.none,

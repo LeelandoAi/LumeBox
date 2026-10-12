@@ -334,10 +334,30 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
   /// 本次播放是否已经处理过片头（只在起播时判一次：用户拖回片头看时不再弹回去）。
   bool _introHandled = false;
 
+  /// 本次播放是否已经处理过片尾（与片头同一条纪律，且是**死循环的守门人**）。
+  ///
+  /// 片尾的判定源是「位置 ≥ 标记」，而跳片尾恰恰把位置推到标记之后（跳到结尾）
+  /// ——没有这个标记，最后一集会在片尾之后**每个快照都重现处理一次**：换集请求
+  /// 与 seek 交替，永远停不下来（真机是每帧一次章节列表请求，用例里直接挂死）。
+  bool _outroHandled = false;
+
   /// 弹幕：设置 + 本集弹幕 + 内存缓存（换集时按 itemId/chapterId 取）。
   DanmakuSettings _danmakuSettings = DanmakuSettings.defaults;
   DanmakuTrack _danmaku = DanmakuTrack.empty;
   final DanmakuCache _danmakuCache = DanmakuCache();
+
+  /// 用户在**打开的读盘完成之前**就动过弹幕设置。
+  ///
+  /// 为什么要有这个标记：阅读库是异步打开的（首次进入要建库，真的会慢一截），
+  /// 而控制栏在库就绪前就画出来了——这期间用户点弹幕开关会走
+  /// [_applyDanmakuSettings]，此刻 [_library] 还是 null、落库一并无从谈起；
+  /// 随后读盘回来若直接 setState 覆盖，用户的这次点击就被悄悄抹掉了（真机
+  /// 反馈的「弹幕关掉后重开视频又变回开」正是这条路：改没存下、显示值又被
+  /// 读盘结果盖回去）。改了就以用户的为准，并把待写值补落到库里。
+  bool _danmakuSettingsDirty = false;
+
+  /// 等着补落的弹幕设置（[_applyDanmakuSettings] 在库还没打开时记下）。
+  DanmakuSettings? _pendingDanmakuSave;
 
   /// 本平台是否提供任一播放内核（没有就是骨架占位）。
   bool get _anyKernelAvailable =>
@@ -502,15 +522,25 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
     try {
       final library = widget.library ?? await ReadingLibrary.open(Section.video);
       if (!mounted) return;
+      final store = DanmakuSettingsStore(library);
+      // 用户在库就绪前改过弹幕设置：以他改的那一份为准，并把待写值补落库
+      //（读盘结果只用于**没人动过**的情况，见 [_danmakuSettingsDirty]）。
+      final loaded = store.load();
+      final pending = _pendingDanmakuSave;
+      _pendingDanmakuSave = null;
       setState(() {
         _library = library;
-        _danmakuSettings = DanmakuSettingsStore(library).load();
+        if (!_danmakuSettingsDirty) _danmakuSettings = loaded;
         // 「前向缓冲」在**模块设置**里（与设置页同一份数据），派生成内核参数；
         // 装载前经 setBuffering 交给内核（见 _rebuildPlayer）。
         _buffering = BufferingConfig.forForwardBuffer(
           SectionModuleSettings.load(library).buffer,
         );
       });
+      if (pending != null) {
+        store.save(pending);
+        LumeLog.info('[player] 弹幕设置（库就绪前改的）已补落库');
+      }
     } catch (error, stackTrace) {
       LumeLog.error(error, stackTrace);
       LumeLog.warn('[player] 阅读库打不开，本次不记录播放进度');
@@ -900,8 +930,10 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
     // 换作品 / 换集前先把上一部的进度落盘（首次起播没有「上一部」，跳过——
     // 否则会写一条位置 0 的空记录，让「继续观看」里凭空多出一部没看过的片子）。
     if (_target != null) _saveProgress(force: true);
-    // 换作品 / 换集：重新读这套片头片尾标记，并允许这片头再判一次。
+    // 换作品 / 换集：重新读这套片头片尾标记，并允许片头**与片尾**再判一次
+    //（片尾那条同样必须复位：换集就是为了让新一集还能走到它自己的片尾）。
     _introHandled = false;
+    _outroHandled = false;
     _loadSkipMarks(target);
     _target = target;
     _input.text = media.uri.toString();
@@ -1197,6 +1229,9 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
     SkipMarksStore(library).save(target.itemId, next);
     setState(() => _skipMarks = next);
     _introHandled = !intro && _introducedAlready;
+    // 「记片尾」记的就是**当前位置**：当场算作已处理，这一集不会被立刻跳走
+    //（用户还要看完这一段）。下次起播 / 换集重新判定，到时照跳。
+    if (!intro) _outroHandled = true;
     _showToast(
       intro
           ? '已记片头：${_format(position)}（下次从这里开始播）'
@@ -1236,8 +1271,17 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
       introEnabled: true,
       outroEnabled: true,
       introHandled: _introHandled,
+      outroHandled: _outroHandled,
       hasNext: _autoNext && target.chapterIndex >= 0,
     );
+    // 片尾只处理一次：位置已经越过片尾标记就等于「这一集的片尾已经管过了」，
+    // 任何一次动作之后都不能再判（否则跳到结尾 / 换集失败之后位置仍在标记之后，
+    // 每个快照都会再来一轮——见 SkipDecision 的第 2 条边界）。
+    if (outcome.action != SkipAction.none &&
+        marks.outro != null &&
+        position >= marks.outro!) {
+      _outroHandled = true;
+    }
     switch (outcome.action) {
       case SkipAction.none:
         return;
@@ -1592,10 +1636,18 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
   }
 
   /// 弹幕设置变更：上屏 + 落库（与「弹幕设置」弹窗同一套落库口径）。
+  ///
+  /// 落库是**必达**的：库还没打开（[_boot] 的读盘没回来）就先记下待写值，
+  /// 读完盘立刻补写——绝不静默丢掉用户这一次点击（见 [_danmakuSettingsDirty]）。
   void _applyDanmakuSettings(DanmakuSettings next) {
+    _danmakuSettingsDirty = true;
     setState(() => _danmakuSettings = next);
     final library = _library;
-    if (library != null) DanmakuSettingsStore(library).save(next);
+    if (library == null) {
+      _pendingDanmakuSave = next;
+      return;
+    }
+    DanmakuSettingsStore(library).save(next);
   }
 
   /// 不支持的项：统一提示（用户点名的口径）。
@@ -1911,23 +1963,29 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
               valueListenable: _speed.kbps,
               builder: (context, kbps, _) => ValueListenableBuilder<bool>(
                 valueListenable: _speed.busy,
-                builder: (context, busy, _) => TextButton(
-                  onPressed: _measureSpeed,
-                  style: TextButton.styleFrom(
-                    minimumSize: const Size(40, 36),
-                    padding: const EdgeInsets.symmetric(horizontal: 6),
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    visualDensity: VisualDensity.compact,
-                    foregroundColor: Colors.white,
-                  ),
-                  child: Text(
-                    busy
-                        ? '…'
-                        : (PlaybackSpeedMeter.describe(kbps) ?? '测速'),
-                    style: const TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      shadows: <Shadow>[Shadow(color: Colors.black54, blurRadius: 6)],
+                builder: (context, busy, _) => ValueListenableBuilder<bool>(
+                  valueListenable: _speed.failed,
+                  builder: (context, failed, _) => TextButton(
+                    onPressed: _measureSpeed,
+                    style: TextButton.styleFrom(
+                      minimumSize: const Size(40, 36),
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      visualDensity: VisualDensity.compact,
+                      foregroundColor: Colors.white,
+                    ),
+                    child: Text(
+                      // 失败如实说「测速失败」：以前失败和「还没测」都显示「测速」，
+                      // 用户点了只觉得没反应（真机反馈）。
+                      busy
+                          ? '…'
+                          : (PlaybackSpeedMeter.describe(kbps) ??
+                              (failed ? '测速失败' : '测速')),
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        shadows: <Shadow>[Shadow(color: Colors.black54, blurRadius: 6)],
+                      ),
                     ),
                   ),
                 ),
@@ -2462,22 +2520,26 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
             valueListenable: _speed.kbps,
             builder: (context, kbps, _) => ValueListenableBuilder<bool>(
               valueListenable: _speed.busy,
-              builder: (context, busy, _) => TextButton.icon(
-                onPressed: _measureSpeed,
-                icon: busy
-                    ? const SizedBox(
-                        width: 12,
-                        height: 12,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.speed, size: 16),
-                label: Text(
-                  busy
-                      ? '测速中'
-                      : (PlaybackSpeedMeter.describe(kbps) == null
-                          ? '测速'
-                          : '网速 ${PlaybackSpeedMeter.describe(kbps)}'),
-                  style: const TextStyle(fontSize: 12),
+              builder: (context, busy, _) => ValueListenableBuilder<bool>(
+                valueListenable: _speed.failed,
+                builder: (context, failed, _) => TextButton.icon(
+                  onPressed: _measureSpeed,
+                  icon: busy
+                      ? const SizedBox(
+                          width: 12,
+                          height: 12,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.speed, size: 16),
+                  label: Text(
+                    // 三态分开：测速中 / 读数 / （失败 · 未测）。
+                    busy
+                        ? '测速中'
+                        : (PlaybackSpeedMeter.describe(kbps) == null
+                            ? (failed ? '测速失败（可重试）' : '测速')
+                            : '网速 ${PlaybackSpeedMeter.describe(kbps)}'),
+                    style: const TextStyle(fontSize: 12),
+                  ),
                 ),
               ),
             ),

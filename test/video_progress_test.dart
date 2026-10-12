@@ -366,7 +366,9 @@ void main() {
 
     // 进播放器（有作品身份：记的标记会落到这部件品上）。
     await tester.tap(find.text('示例影片'));
-    await tester.pumpAndSettle();
+    // 预写了片尾标记后，页面进场就开始持续判定跳过，pumpAndSettle 等不到静止。
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 400));
 
     // 播到 1:35（片头结束的位置）→ 「更多」里记片头。
     created.last.emit(
@@ -374,12 +376,22 @@ void main() {
       duration: const Duration(minutes: 45),
       playing: true,
     );
-    await tester.pumpAndSettle();
+    // 播放中有常驻定时器在跑（进度落盘 / 弹幕节拍 / 跳过判定），
+    // pumpAndSettle 永远等不到「无新帧」——按固定时长推进即可。
+    await tester.pump(const Duration(milliseconds: 400));
     await tester.tap(find.byTooltip('更多（清晰度 / 音轨 / 跳过片头片尾 / 连播）'));
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 400));
     expect(find.text('跳过片头片尾'), findsOneWidget);
+    // 面板限高 70% 屏高且可滚动：「记片头」可能落在可视区外，先把面板内容上拖。
+    // （拖动目标本身可能已经在可视区之外，miss 属正常，不必告警。）
+    await tester.drag(
+      find.text('跳过片头片尾'),
+      const Offset(0, -320),
+      warnIfMissed: false,
+    );
+    await tester.pump(const Duration(milliseconds: 400));
     await tester.tap(find.text('记片头'));
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 400));
     expect(find.textContaining('已记片头'), findsOneWidget);
 
     // 播到片尾标记之后：这一部只有 1 集 → 跳到结尾（不走连播）。
@@ -390,14 +402,19 @@ void main() {
       duration: const Duration(minutes: 45),
       playing: true,
     );
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 400));
     expect(
       created.last.seeks,
       contains(const Duration(minutes: 45)),
       reason: '片尾到点：没有下一集就跳到结尾',
     );
+    // 提示是**排队显示**的：上一条「已记片头」还在屏幕上（SnackBar 默认 4 秒），
+    // 这一条要等它走完才轮到——按固定步长推进到队列清空，再断言。
+    for (var i = 0; i < 12; i++) {
+      await tester.pump(const Duration(milliseconds: 500));
+    }
     expect(find.textContaining('已跳过片尾'), findsOneWidget);
-  });
+  }, timeout: const Timeout(Duration(seconds: 60)));
 
   testWidgets('退出播放后再点别的视频：图源管理器不能被播放页关掉（真机报库已关闭的回归）', (tester) async {
     source.items = const <SourceItem>[

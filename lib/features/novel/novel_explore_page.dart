@@ -16,16 +16,22 @@ class NovelExplorePage extends StatelessWidget {
     required this.library,
     required this.pipeline,
     this.manager,
+    this.revision = 0,
   });
 
   final ReadingLibrary library;
   final SectionImagePipeline pipeline;
   final SourceManager? manager;
 
+  /// 图源变更代数（宿主导入 / 删除 / 停用后 +1）：透传给 [ExploreView]，
+  /// 由它**原地**重新解析——**不要**用 Key 重挂本页（见漫画侧同名参数的说明）。
+  final int revision;
+
   @override
   Widget build(BuildContext context) {
     final sourceManager = manager ?? LumeSources.manager(Section.novel);
     return ExploreView(
+      revision: revision,
       // 用户要求：小说 / 漫画两块去掉工具栏里的「排序」（视频板块保留）。
       showSort: false,
       // 顶栏已经有「源管理」：工具条的源下拉里不再重复放一个

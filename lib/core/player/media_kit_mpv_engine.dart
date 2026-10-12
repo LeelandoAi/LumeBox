@@ -573,6 +573,9 @@ class MediaKitMpvEngine
     );
   }
 
+  /// 释放播放器的等待上限（安全阀，见 [dispose]）。
+  static const Duration disposeTimeout = Duration(seconds: 10);
+
   @override
   Future<void> dispose() async {
     if (_disposed) return;
@@ -586,18 +589,32 @@ class MediaKitMpvEngine
     }
     _subscriptions.clear();
     _onSnapshot = null;
+    // 视频输出的收尾**只能由 media_kit 自己按它的顺序做**，这一层不许插手：
+    //
+    // iOS 上的视频输出就是 libmpv 的 render context，它挂在 `Player.dispose()`
+    // 的 release 链上——Player 销毁时先等视频控制器就绪，再调
+    // `VideoOutputManager.Dispose` 释放原生渲染上下文，**最后**（延迟 5 秒）才
+    // `mpv_terminate_destroy`。libmpv 对这条顺序零容忍：`mp_destroy_client` 里
+    // 一旦发现 render context 还在，直接 abort：
+    //   `Broken API use: mpv_render_context_free() not called.`
+    // ——真机两次复现的 SIGABRT 就是这个（mp_destroy_client →
+    // mp_clients_destroy.cold.1 → abort，都发生在「播放中切内核 / 退出播放页」）。
+    //
+    // 曾经的写法是在这里先 `await _video.platform.future` 再 `controller.dispose()`
+    // （想着「先把视频输出收掉更稳」）。那是**基类**的 dispose：它只关掉 id / rect
+    // 两个 ValueNotifier，原生释放仍在 `_dispose()`（由 Player 的 release 链调用）。
+    // 而 Debug 构建里 `ValueNotifier.dispose` 二次调用会抛（"A ValueNotifier
+    // was used after being disposed"），异常被 release 链吞掉 →
+    // `VideoOutputManager.Dispose` 再也不被调用 → 原生渲染上下文永远活着 →
+    // 5 秒后 terminate 命中上面那条 abort。release 构建里那次调用虽然不抛，
+    // 但它本身没有任何释放作用——删掉它两种构建都回到唯一正确的顺序。
     try {
-      // media_kit_video 的平台控制器由这里显式释放；它可能还没建好，
-      // 因此等一下就绪、超时就跳过（下面释放 Player 也会收回视频输出）。
-      final controller = await _video.platform.future
-          .timeout(const Duration(seconds: 1));
-      controller.dispose();
+      // 超时只是安全阀：不阻塞「切内核 / 退出播放页」的交互。即使这里超时，
+      // media_kit 的 release 链也会在后台按顺序跑完，上面那条时序保证不依赖
+      // 我们等多久。
+      await _player.dispose().timeout(disposeTimeout);
     } catch (error, stackTrace) {
-      LumeLog.error(error, stackTrace);
-    }
-    try {
-      await _player.dispose();
-    } catch (error, stackTrace) {
+      LumeLog.warn('[mpv] 释放播放器未在预算内完成（media_kit 会自行收尾）：$error');
       LumeLog.error(error, stackTrace);
     }
   }

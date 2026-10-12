@@ -18,16 +18,29 @@ class ComicExplorePage extends StatelessWidget {
     required this.library,
     required this.pipeline,
     this.manager,
+    this.revision = 0,
   });
 
   final ReadingLibrary library;
   final SectionImagePipeline pipeline;
   final SourceManager? manager;
 
+  /// 图源变更代数（宿主导入 / 删除 / 停用后 +1）：透传给 [ExploreView]，由它
+  /// **原地**重新解析。
+  ///
+  /// 为什么不能用 Key 重挂本页（曾经就是这么写的，真机报错）：重挂会先建新实例，
+  /// 而它的首次解析**同步**就能拿到板块共享的注册表（`SourceRegistry.open` 命中
+  /// 缓存就直接返回、不 await）；同一帧末尾旧实例才 dispose，把那份注册表连同
+  /// 数据库一起关掉——新实例在飞的那条读随后撞上已关闭的库：
+  /// `Bad state: This database has already been closed`（真机在漫画导入订阅后
+  /// 的探索页看到的就是这句）。原地刷新没有第二次 dispose，这条路整个不存在。
+  final int revision;
+
   @override
   Widget build(BuildContext context) {
     final sourceManager = manager ?? LumeSources.manager(Section.comic);
     return ExploreView(
+      revision: revision,
       // 用户要求：小说 / 漫画两块去掉工具栏里的「排序」（视频板块保留）。
       showSort: false,
       // 顶栏已经有「源管理」：工具条的源下拉里不再重复放一个

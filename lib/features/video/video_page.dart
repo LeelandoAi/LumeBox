@@ -125,6 +125,14 @@ class _VideoPageState extends State<VideoPage> {
     if (widget.library == null && !_playerRouteOpen) {
       ReadingLibrary.close(Section.video);
     }
+    // 自己开的图源板块也自己关（与阅读库同一条纪律，注入进来的不代管）。
+    // 收在板块页而不是浏览面 [ExploreView]：那边只是借用板块级的图源管理器，
+    // 它一 close 就等于关掉整个板块的图源库（真机报「database has already been
+    // closed」的根因）。播放器页也借用同一份（连播 / 弹幕），所以它还在栈上时
+    // 同样先让给它用——与阅读库同一条理由。
+    if (widget.sourceManager == null && !_playerRouteOpen) {
+      LumeSources.close(Section.video);
+    }
     super.dispose();
   }
 

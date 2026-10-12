@@ -208,7 +208,12 @@ class _ExploreViewState extends State<ExploreView> {
     _suggestSeq++;
     _suggestDebounce?.cancel();
     _search.dispose();
-    _manager.close();
+    // 图源管理器是**板块级共享**的（本页只是借用）：这里**不 close**。
+    // 关掉它等于关掉整个板块的图源库与运行时——本页在图源变更后会原地刷新、
+    // 也可能被宿主重挂，而板块里的书架 / 详情 / 播放页还在用它，关了它们随后
+    // 就报「This database has already been closed」（真机复现过两次）。
+    // 板块资源的释放归**宿主板块页**（见 ComicPage / NovelPage / VideoPage 的
+    // dispose，同一条纪律），与播放器页对图源管理器的口径一致。
     super.dispose();
   }
 

@@ -137,11 +137,17 @@ class SkipOutcome {
 
 /// 播放中「该不该跳、跳到哪」的判定（纯函数：好测，也不掺 UI）。
 ///
-/// 三条边界（都是刻意的）：
+/// 四条边界（都是刻意的）：
 /// 1. **片头只在起播时判一次**（[introHandled]）：用户可能刻意拖回片头看，
 ///    每次都把他弹回去就变成了「拉不动进度条」；
-/// 2. **片尾到点就跳**：还有下一集就进下一集，没有就跳到结尾；
-/// 3. 标记越界（为 0 / 大于时长）不生效——不拿坏数据折腾播放器。
+/// 2. **片尾也只处理一次**（[outroHandled]）：这条是**死循环的守门人**——判定源
+///    是「位置 ≥ 片尾标记」，而片尾的动作恰好把位置推到结尾（或去换集），下一帧
+///    快照依旧满足条件。少了它，「最后一集 + 记过片尾」就是每个快照都换一次集 /
+///    seek 一次结尾：位置永远停在片尾之后，循环永不退出（用例里直接挂死；真机上
+///    是每帧一次章节列表请求）。换集成功会换一条新媒体（标记随之重判），所以
+///    「处理过」只在**同一条媒体内**生效；
+/// 3. **片尾到点就跳**：还有下一集就进下一集，没有就跳到结尾；
+/// 4. 标记越界（为 0 / 大于时长）不生效——不拿坏数据折腾播放器。
 class SkipDecision {
   const SkipDecision._();
 
@@ -152,6 +158,7 @@ class SkipDecision {
     required bool introEnabled,
     required bool outroEnabled,
     required bool introHandled,
+    required bool outroHandled,
     required bool hasNext,
   }) {
     final intro = marks.intro;
@@ -165,6 +172,7 @@ class SkipDecision {
     }
     final outro = marks.outro;
     if (outroEnabled &&
+        !outroHandled &&
         outro != null &&
         outro > Duration.zero &&
         position >= outro &&
